@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Спрайти: стоїть / крокує / біжить</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+<style>
+:root{--bg:#eef3f7;--ink:#14212b;--panel:#fff;--line:#cfdae3;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1a22;--ink:#e8f0f5;--panel:#17252f;--line:#2a3b47}}
+:root[data-theme="dark"]{--bg:#0f1a22;--ink:#e8f0f5;--panel:#17252f;--line:#2a3b47}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"Trebuchet MS",Verdana,sans-serif}
+body{display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px}
+h1{margin:0;font-size:1.3rem}
+canvas{max-width:100%;height:auto !important;border-radius:12px}
+#ui{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;max-width:640px}
+#ui button{font:inherit;padding:6px 14px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+#ui button.on{background:var(--ink);color:var(--bg)}
+#ui label{font-size:.9rem;display:flex;align-items:center;gap:6px}
+p{margin:0;font-size:.85rem;opacity:.75;text-align:center}
+</style>
+</head>
+<body>
+<h1>Спрайти та спрайтшіт</h1>
+<main id="holder"></main>
+<div id="ui"></div>
+<p>1 — стоїть · 2 — крокує · 3 — біжить · F — Flip · H — хітбокс</p>
+<script>
+// ---- Спрайтшіт створюється в коді (без зовнішніх файлів) ----
+const FW = 96, FH = 96, COLS = 6;
+const ANIMS = {
+  stand: { row: 0, frames: 4, fps: 4,  label: 'Стоїть',  hb: { x: 34, y: 16, w: 28, h: 72 } },
+  walk:  { row: 1, frames: 6, fps: 11, label: 'Крокує',  hb: { x: 30, y: 18, w: 36, h: 70 } },
+  run:   { row: 2, frames: 6, fps: 15, label: 'Біжить',  hb: { x: 22, y: 28, w: 52, h: 60 } }
+};
+const CX = 230, GROUND = 350, FOOT = FH - 8;   // точка на землі всередині кадру
+let sheet, anim = 'stand', flip = false, showHB = true, scaleSlider, scaleLabel, animStart = 0, scroll = 0;
+const btns = {};
+
+function limb(g, x, y, a, len, w, col) {
+  g.stroke(col); g.strokeWeight(w);
+  g.line(x, y, x + Math.sin(a) * len, y + Math.cos(a) * len);
+}
+
+function drawFrame(g, name, i) {
+  const A = ANIMS[name], n = A.frames, ph = TWO_PI * i / n;
+  g.push();
+  g.translate(i * FW + FW / 2, A.row * FH + FOOT);
+  g.strokeCap(ROUND); g.noStroke();
+  const P = {
+    stand: { leg: 0.05, arm: 0.08, bob: Math.sin(ph) * 1.5, lean: 0,    armBase: 0.05 },
+    walk:  { leg: 0.5,  arm: 0.45, bob: -Math.abs(Math.sin(ph)) * 2, lean: 0.04, armBase: 0.1 },
+    run:   { leg: 0.95, arm: 0.9,  bob: -Math.abs(Math.sin(ph)) * 5, lean: 0.22, armBase: 0.9 }
+  }[name];
+  const L = 34, hipY = -L + P.bob;
+  limb(g, 0, hipY, -Math.sin(ph) * P.leg, L, 8, '#1e2a40');   // задня нога
+  limb(g, 0, hipY, Math.sin(ph) * P.leg, L, 8, '#2d3f63');    // передня нога
+  g.push(); g.translate(0, hipY); g.rotate(P.lean);
+  limb(g, 0, -26, P.armBase - Math.sin(ph) * P.arm, 22, 6, '#2c6aa5');  // задня рука
+  g.noStroke(); g.fill('#3b82c4'); g.rect(-9, -32, 18, 32, 6);          // тулуб
+  g.fill('#f1c27d'); g.circle(0, -44, 22);                              // голова
+  g.fill('#14212b'); g.circle(5, -46, 3);                               // око
+  limb(g, 0, -26, P.armBase + Math.sin(ph) * P.arm, 22, 6, '#5aa0e0');  // передня рука
+  g.pop(); g.pop();
+}
+
+function buildSheet() {
+  sheet = createGraphics(FW * COLS, FH * 3);
+  sheet.clear();
+  for (const name in ANIMS) for (let i = 0; i < ANIMS[name].frames; i++) drawFrame(sheet, name, i);
+}
+
+function setAnim(name) {
+  anim = name; animStart = millis();
+  for (const k in btns) btns[k].elt.classList.toggle('on', k === name);
+}
+
+function setup() {
+  createCanvas(640, 400).parent('holder');
+  textFont('Trebuchet MS');
+  buildSheet();
+
+  const ui = select('#ui');
+  [['stand', '1 Стоїть'], ['walk', '2 Крокує'], ['run', '3 Біжить']].forEach(([k, t]) => {
+    btns[k] = createButton(t).parent(ui).mousePressed(() => setAnim(k));
+  });
+  const lab = createElement('label', 'Масштаб ').parent(ui);
+  scaleSlider = createSlider(0.5, 3.5, 2, 0.1).parent(lab);
+  scaleLabel = createSpan('2.0×').parent(lab);
+  createButton('Flip').parent(ui).mousePressed(() => flip = !flip);
+  createButton('Хітбокс').parent(ui).mousePressed(() => showHB = !showHB);
+  setAnim('stand');
+}
+
+function keyPressed() {
+  if (keyCode === 49) setAnim('stand');
+  if (keyCode === 50) setAnim('walk');
+  if (keyCode === 51) setAnim('run');
+  // keyCode не залежить від розкладки (працює і з українською: F = «а», H = «р»)
+  if (keyCode === 70) flip = !flip;
+  if (keyCode === 72) showHB = !showHB;
+}
+
+function draw() {
+  background('#f6f9fb');
+  const A = ANIMS[anim], s = scaleSlider.value();
+  scaleLabel.html(s.toFixed(1) + '×');
+  const fi = Math.floor((millis() - animStart) / 1000 * A.fps) % A.frames;
+
+  // земля, що "біжить" назад
+  const speed = { stand: 0, walk: 70, run: 170 }[anim] * (flip ? -1 : 1);
+  scroll = (scroll - speed * deltaTime / 1000) % 40;
+  stroke('#9db2c2'); strokeWeight(2); line(0, GROUND, width, GROUND);
+  for (let x = scroll - 40; x < width + 40; x += 40) line(x, GROUND + 6, x + 14, GROUND + 6);
+
+  // кадр зі спрайтшіта: вирізаємо source-прямокутник
+  const left = CX - FW * s / 2, top = GROUND - FOOT * s;
+  noSmooth();
+  push(); translate(CX, 0); scale(flip ? -1 : 1, 1);
+  image(sheet, -FW * s / 2, top, FW * s, FH * s, fi * FW, A.row * FH, FW, FH);
+  pop();
+  smooth();
+
+  // хітбокс (дзеркалиться разом із Flip)
+  if (showHB) {
+    const h = A.hb, hx = flip ? FW - h.x - h.w : h.x;
+    noFill(); stroke('#e02d2d'); strokeWeight(2);
+    rect(left + hx * s, top + h.y * s, h.w * s, h.h * s);
+  }
+
+  // превʼю спрайтшіта з підсвіткою поточного кадру
+  const ps = 0.4, px = width - FW * COLS * ps - 8, py = 8;
+  image(sheet, px, py, FW * COLS * ps, FH * 3 * ps);
+  noFill(); stroke('#9db2c2'); strokeWeight(1);
+  for (let r = 0; r < 3; r++) for (let c = 0; c < COLS; c++) rect(px + c * FW * ps, py + r * FH * ps, FW * ps, FH * ps);
+  stroke('#f2a900'); strokeWeight(2);
+  rect(px + fi * FW * ps, py + A.row * FH * ps, FW * ps, FH * ps);
+
+  noStroke(); fill('#14212b'); textAlign(LEFT, TOP); textSize(15);
+  text(A.label + ' · ' + A.fps + ' FPS · кадр ' + (fi + 1) + '/' + A.frames, 12, 10);
+  textSize(12); fill('#5b6b78');
+  text('Хітбокс: ' + A.hb.w + '×' + A.hb.h + ' px (у кадрі ' + FW + '×' + FH + ')', 12, 30);
+}
+</script>
+</body>
+</html>
